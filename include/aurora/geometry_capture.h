@@ -36,6 +36,11 @@ typedef struct AuroraGxCaptureDraw {
   // Triangle index list (native endian u16), always a multiple of 3
   const uint16_t* indices;
   uint32_t        indexCount;
+
+  // Render context — useful for filtering draws to specific passes
+  uint8_t projType;        // GXProjectionType: GX_PERSPECTIVE=0, GX_ORTHOGRAPHIC=1
+  float   viewportWidth;   // render viewport dimensions in pixels
+  float   viewportHeight;
 } AuroraGxCaptureDraw;
 
 typedef void (*AuroraGeometryCaptureCallback)(const AuroraGxCaptureDraw* draw, void* userdata);

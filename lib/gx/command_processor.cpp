@@ -1580,8 +1580,11 @@ static void maybe_fire_capture(GXPrimitive prim, GXVtxFmt fmt, u16 vtxCount, con
   for (uint32_t m = 0; m < 10; ++m) {
     memcpy(cap.pnMtx[m], &g_gxState.pnMtx[m].pos, sizeof(cap.pnMtx[m]));
   }
-  cap.indices    = reinterpret_cast<const uint16_t*>(capIdxBuf.data());
-  cap.indexCount = static_cast<uint32_t>(capIdxBuf.size() / sizeof(uint16_t));
+  cap.indices       = reinterpret_cast<const uint16_t*>(capIdxBuf.data());
+  cap.indexCount    = static_cast<uint32_t>(capIdxBuf.size() / sizeof(uint16_t));
+  cap.projType       = static_cast<uint8_t>(g_gxState.projType);
+  cap.viewportWidth  = g_gxState.renderViewport.width;
+  cap.viewportHeight = g_gxState.renderViewport.height;
 
   g_captureCallback(&cap, g_captureUserdata);
 }
