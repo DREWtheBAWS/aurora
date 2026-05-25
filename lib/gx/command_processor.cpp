@@ -8,6 +8,7 @@
 #include "pipeline.hpp"
 #include "shader_info.hpp"
 #include "../internal.hpp"
+#include "aurora/geometry_capture.h"
 
 #include <absl/container/flat_hash_map.h>
 #include <tracy/Tracy.hpp>
@@ -15,6 +16,14 @@
 #include <cmath>
 #include <cstring>
 #include <optional>
+
+static AuroraGeometryCaptureCallback g_captureCallback = nullptr;
+static void* g_captureUserdata = nullptr;
+
+void aurora_set_geometry_capture(AuroraGeometryCaptureCallback callback, void* userdata) {
+  g_captureCallback = callback;
+  g_captureUserdata = userdata;
+}
 
 namespace aurora::gx::fifo {
 static Module Log("aurora::gx::fifo");
@@ -1531,7 +1540,54 @@ static u32 calculate_last_vtx_size(GXVtxFmt fmt) {
   return vtxSize;
 }
 
-static void handle_draw_unmerged(GXPrimitive prim, GXVtxFmt fmt, u16 vtxCount, gfx::Range vertRange);
+static void maybe_fire_capture(GXPrimitive prim, GXVtxFmt fmt, u16 vtxCount, const u8* rawVerts) {
+  if (g_captureCallback == nullptr || g_gxState.vtxDesc[GX_VA_POS] == GX_NONE) {
+    return;
+  }
+
+  const auto& vtxFmt = g_gxState.vtxFmts[fmt];
+  const auto& posFmt = vtxFmt.attrs[GX_VA_POS];
+  const auto& posArr = g_gxState.arrays[GX_VA_POS];
+
+  uint32_t posOffset = 0;
+  for (int i = GX_VA_PNMTXIDX; i < GX_VA_POS; ++i) {
+    switch (g_gxState.vtxDesc[i]) {
+    case GX_NONE:    break;
+    case GX_DIRECT:  posOffset += 1; break;
+    case GX_INDEX8:  posOffset += 1; break;
+    case GX_INDEX16: posOffset += 2; break;
+    }
+  }
+
+  ByteBuffer capIdxBuf;
+  prepare_idx_buffer(capIdxBuf, prim, 0, vtxCount);
+
+  AuroraGxCaptureDraw cap{};
+  cap.vertData         = rawVerts;
+  cap.vertCount        = vtxCount;
+  cap.vertStride       = g_gxState.lastVtxSize;
+  cap.posOffset        = posOffset;
+  cap.posCompCnt       = static_cast<uint8_t>(posFmt.cnt);
+  cap.posCompType      = static_cast<uint8_t>(posFmt.type);
+  cap.posFrac          = posFmt.frac;
+  cap.posAttrType      = static_cast<uint8_t>(g_gxState.vtxDesc[GX_VA_POS]);
+  cap.posArray         = static_cast<const uint8_t*>(posArr.data);
+  cap.posArrayStride   = posArr.stride;
+  cap.posArrayLittleEndian = posArr.le;
+  cap.hasPnMtxIdx      = (g_gxState.vtxDesc[GX_VA_PNMTXIDX] == GX_DIRECT);
+  cap.currentPnMtx     = g_gxState.currentPnMtx;
+  static_assert(sizeof(g_gxState.pnMtx[0].pos) == sizeof(cap.pnMtx[0]));
+  for (uint32_t m = 0; m < 10; ++m) {
+    memcpy(cap.pnMtx[m], &g_gxState.pnMtx[m].pos, sizeof(cap.pnMtx[m]));
+  }
+  cap.indices    = reinterpret_cast<const uint16_t*>(capIdxBuf.data());
+  cap.indexCount = static_cast<uint32_t>(capIdxBuf.size() / sizeof(uint16_t));
+
+  g_captureCallback(&cap, g_captureUserdata);
+}
+
+static void handle_draw_unmerged(GXPrimitive prim, GXVtxFmt fmt, u16 vtxCount, gfx::Range vertRange,
+                                 const u8* rawVerts);
 
 // Draw command handler - parses vertices inline and caches results
 static ByteBuffer handle_draw_idx_buf;
@@ -1559,6 +1615,7 @@ static void handle_draw(u8 cmd, const u8* data, u32& pos, u32 size, bool bigEndi
   }
 
   // Push raw vertex data to buffer
+  const u8* captureVerts = data + pos;
   gfx::Range vertRange = gfx::push_verts(data + pos, totalVtxBytes);
   pos += totalVtxBytes;
 
@@ -1582,16 +1639,18 @@ static void handle_draw(u8 cmd, const u8* data, u32& pos, u32 size, bool bigEndi
       lastDraw->vtxCount += vtxCount;
       lastDraw->indexCount += numIndices;
       ++gfx::g_mergedDrawCallCount;
+      maybe_fire_capture(prim, fmt, vtxCount, captureVerts);
       return;
     }
   }
 
-  handle_draw_unmerged(prim, fmt, vtxCount, vertRange);
+  handle_draw_unmerged(prim, fmt, vtxCount, vertRange, captureVerts);
 }
 
 static ByteBuffer handle_draw_unmerged_idxBuf;
 
-static void handle_draw_unmerged(GXPrimitive prim, GXVtxFmt fmt, u16 vtxCount, gfx::Range vertRange) {
+static void handle_draw_unmerged(GXPrimitive prim, GXVtxFmt fmt, u16 vtxCount, gfx::Range vertRange,
+                                 const u8* rawVerts) {
   ZoneScoped;
   u32 numIndices = 0;
   gfx::Range idxRange;
@@ -1602,6 +1661,10 @@ static void handle_draw_unmerged(GXPrimitive prim, GXVtxFmt fmt, u16 vtxCount, g
     numIndices = prepare_idx_buffer(realBuf, prim, 0, vtxCount);
     idxRange = gfx::push_indices(realBuf.data(), realBuf.size());
     realBuf.clear();
+
+    if (prim != GX_LINES && prim != GX_LINESTRIP && prim != GX_POINTS) {
+      maybe_fire_capture(prim, fmt, vtxCount, rawVerts);
+    }
   }
 
   // Build pipeline, bind groups, and push draw command
