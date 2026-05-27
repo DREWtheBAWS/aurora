@@ -1,8 +1,10 @@
 #include <aurora/aurora.h>
+#include <aurora/post_render.h>
 
 #ifdef AURORA_ENABLE_GX
 #include "gfx/common.hpp"
 #include "gx/fifo.hpp"
+#include "gx/gx.hpp"
 #include "imgui.hpp"
 #include "webgpu/gpu.hpp"
 #include <webgpu/webgpu_cpp.h>
@@ -35,6 +37,10 @@ Module Log("aurora");
 using webgpu::g_device;
 using webgpu::g_queue;
 using webgpu::g_surface;
+
+// Post-render callback (RTAO and other custom passes)
+AuroraPostRenderCallback g_postRenderCallback = nullptr;
+void* g_postRenderUserdata = nullptr;
 #endif
 
 #ifdef AURORA_ENABLE_GX
@@ -262,6 +268,9 @@ void end_frame() noexcept {
   auto encoder = g_device.CreateCommandEncoder(&encoderDescriptor);
   gfx::end_frame(encoder);
   gfx::render(encoder);
+  if (g_postRenderCallback != nullptr) {
+    g_postRenderCallback(g_device.Get(), encoder.Get(), g_postRenderUserdata);
+  }
   {
     window::SurfaceLock surfaceLock;
     if (window::is_presentable() && g_surface && g_currentView) {
@@ -387,5 +396,41 @@ void aurora_set_resampler(AuroraSampler sampler) {
   aurora::webgpu::set_resampler(sampler);
 #else
   (void)sampler;
+#endif
+}
+
+// --- Post-render hook API ---------------------------------------------------
+
+void aurora_set_post_render_callback(AuroraPostRenderCallback cb, void* userdata) {
+#ifdef AURORA_ENABLE_GX
+  aurora::g_postRenderCallback = cb;
+  aurora::g_postRenderUserdata = userdata;
+#else
+  (void)cb; (void)userdata;
+#endif
+}
+
+WGPUTextureView aurora_get_depth_texture_view(void) {
+#ifdef AURORA_ENABLE_GX
+  return aurora::webgpu::g_depthBuffer.view.Get();
+#else
+  return nullptr;
+#endif
+}
+
+WGPUTexture aurora_get_depth_texture(void) {
+#ifdef AURORA_ENABLE_GX
+  return aurora::webgpu::g_depthBuffer.texture.Get();
+#else
+  return nullptr;
+#endif
+}
+
+void aurora_get_proj_matrix(float out[16]) {
+#ifdef AURORA_ENABLE_GX
+  static_assert(sizeof(aurora::Mat4x4<float>) == 64);
+  memcpy(out, &aurora::gx::g_gxState.proj, 64);
+#else
+  memset(out, 0, 64);
 #endif
 }

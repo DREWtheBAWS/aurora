@@ -49,6 +49,9 @@ if (AURORA_ENABLE_GX)
     target_compile_definitions(aurora_core PUBLIC AURORA_ENABLE_GX WEBGPU_DAWN)
     target_sources(aurora_core PRIVATE lib/webgpu/gpu.cpp lib/webgpu/gpu_cache.cpp lib/dawn/BackendBinding.cpp)
     target_link_libraries(aurora_core PRIVATE dawn::webgpu_dawn)
+    # Expose Dawn include dirs publicly so consumers can use post_render.h and
+    # other Aurora headers that reference <webgpu/webgpu.h>.
+    target_link_libraries(aurora_core PUBLIC dawn::dawn_public_config)
     if (DAWN_ENABLE_VULKAN)
         target_compile_definitions(aurora_core PRIVATE DAWN_ENABLE_BACKEND_VULKAN)
     endif ()
