@@ -36,6 +36,9 @@ struct TextureRef {
   u32 gxFormat;
   bool hasArbitraryMips = false;
   bool isReplacement = false;
+  // True for CMPR textures that contain at least one punch-through block
+  // (color1 ≤ color2), meaning some pixels can be alpha=0.
+  bool hasPunchThrough = false;
 
   TextureRef(wgpu::Texture texture, wgpu::TextureView sampleTextureView, wgpu::TextureView attachmentTextureView,
              wgpu::Extent3D size, wgpu::TextureFormat format, uint32_t mipCount, u32 gxFormat)

@@ -45,6 +45,28 @@ typedef struct AuroraGxCaptureDraw {
   // Full 4x4 GX projection matrix at draw time (row-major).
   // Reconstructed from the 6 XF projection params by Aurora.
   float projMtx[4][4];
+
+  // Texture coordinate 0 attribute descriptor (same layout convention as pos).
+  // tex0AttrType == GX_NONE means no tex coords present for this draw.
+  uint32_t       tex0Offset;       // byte offset of tex0 within each vertex
+  uint8_t        tex0CompCnt;      // GXCompCnt: GX_TEX_S=0, GX_TEX_ST=1
+  uint8_t        tex0CompType;     // GXCompType: GX_U8=0,GX_S8=1,GX_U16=2,GX_S16=3,GX_F32=4
+  uint8_t        tex0Frac;         // fixed-point fractional bits (0 for float)
+  uint8_t        tex0AttrType;     // GXAttrType: GX_NONE=0,GX_DIRECT=1,GX_INDEX8=2,GX_INDEX16=3
+  const uint8_t* tex0Array;        // indirect array (only when tex0AttrType != GX_DIRECT)
+  uint32_t       tex0ArrayStride;
+
+  // Currently-bound texture for GX_TEXMAP0 (raw WGPUTextureView, cast at call site).
+  // Null when no texture is bound or the texture has no GPU-side handle yet.
+  void* tex0View;
+  bool  tex0HasAlpha;  // true when the GX texture format carries an alpha channel
+
+  // Alpha compare state at draw time.  alphaComp0 == GX_ALWAYS means no alpha test.
+  uint8_t alphaComp0;  // GXCompare for operand 0
+  uint8_t alphaRef0;   // reference value 0 (0-255)
+  uint8_t alphaComp1;  // GXCompare for operand 1
+  uint8_t alphaRef1;   // reference value 1 (0-255)
+  uint8_t alphaOp;     // GXAlphaOp combining comp0 and comp1
 } AuroraGxCaptureDraw;
 
 typedef void (*AuroraGeometryCaptureCallback)(const AuroraGxCaptureDraw* draw, void* userdata);

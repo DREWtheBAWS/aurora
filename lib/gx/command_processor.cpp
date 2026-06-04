@@ -1588,6 +1588,47 @@ static void maybe_fire_capture(GXPrimitive prim, GXVtxFmt fmt, u16 vtxCount, con
   static_assert(sizeof(g_gxState.proj) == sizeof(cap.projMtx));
   memcpy(cap.projMtx, &g_gxState.proj, sizeof(cap.projMtx));
 
+  // Tex coord 0 — compute byte offset by summing all attributes before GX_VA_TEX0.
+  if (g_gxState.vtxDesc[GX_VA_TEX0] != GX_NONE) {
+    uint32_t tex0Off = 0;
+    for (int i = GX_VA_PNMTXIDX; i < GX_VA_TEX0; ++i) {
+      auto ad = g_gxState.vtxDesc[i];
+      if      (ad == GX_NONE)    {}
+      else if (ad == GX_INDEX8)  { tex0Off += 1; }
+      else if (ad == GX_INDEX16) { tex0Off += 2; }
+      else { // GX_DIRECT — no const local, avoids C2737 jump-over restriction
+        tex0Off += comp_type_size(static_cast<GXAttr>(i), vtxFmt.attrs[i].type) *
+                   comp_cnt_count(static_cast<GXAttr>(i), vtxFmt.attrs[i].cnt);
+      }
+    }
+    cap.tex0Offset    = tex0Off;
+    cap.tex0CompCnt   = static_cast<uint8_t>(vtxFmt.attrs[GX_VA_TEX0].cnt);
+    cap.tex0CompType  = static_cast<uint8_t>(vtxFmt.attrs[GX_VA_TEX0].type);
+    cap.tex0Frac      = vtxFmt.attrs[GX_VA_TEX0].frac;
+    cap.tex0AttrType  = static_cast<uint8_t>(g_gxState.vtxDesc[GX_VA_TEX0]);
+    cap.tex0Array     = static_cast<const uint8_t*>(g_gxState.arrays[GX_VA_TEX0].data);
+    cap.tex0ArrayStride = g_gxState.arrays[GX_VA_TEX0].stride;
+
+    // Expose the live GPU texture view for GX_TEXMAP0 so the AO pass can bind it.
+    const gfx::TextureBind& t0 = get_texture(GX_TEXMAP0);
+    if (t0) {
+      cap.tex0View = reinterpret_cast<void*>(
+          static_cast<WGPUTextureView>(t0.ref->sampleTextureView.Get()));
+      // Use the scan result from texture creation: true only if at least one decoded
+      // pixel has alpha ≤ 127 (would be clipped by the AO shader's 0.5 threshold).
+      // This eliminates false positives from dirty GX alpha-compare state — opaque
+      // terrain/character textures have no such pixel and are never registered.
+      cap.tex0HasAlpha = t0.ref->hasPunchThrough;
+    }
+  }
+
+  // Alpha compare state — GX_ALWAYS on both operands means no alpha test.
+  cap.alphaComp0 = static_cast<uint8_t>(g_gxState.alphaCompare.comp0);
+  cap.alphaRef0  = static_cast<uint8_t>(g_gxState.alphaCompare.ref0);
+  cap.alphaComp1 = static_cast<uint8_t>(g_gxState.alphaCompare.comp1);
+  cap.alphaRef1  = static_cast<uint8_t>(g_gxState.alphaCompare.ref1);
+  cap.alphaOp    = static_cast<uint8_t>(g_gxState.alphaCompare.op);
+
   g_captureCallback(&cap, g_captureUserdata);
 }
 

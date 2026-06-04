@@ -87,6 +87,7 @@ TextureHandle new_static_texture_2d(uint32_t width, uint32_t height, uint32_t mi
     if (!converted.data.empty()) {
       data = converted.data;
       ref.hasArbitraryMips = converted.hasArbitraryMips;
+      ref.hasPunchThrough = converted.hasPunchThrough;
     }
   }
 
@@ -236,6 +237,7 @@ void write_texture(TextureRef& ref, ArrayRef<uint8_t> data) noexcept {
   if (ref.gxFormat != InvalidTextureFormat) {
     converted = convert_texture(ref.gxFormat, ref.size.width, ref.size.height, ref.mipCount, data);
     ref.hasArbitraryMips = converted.hasArbitraryMips;
+    ref.hasPunchThrough = converted.hasPunchThrough;
     if (!converted.data.empty()) {
       data = converted.data;
     }

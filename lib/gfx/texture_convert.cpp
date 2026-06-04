@@ -509,6 +509,22 @@ ConvertedTexture convert_texture(u32 format, uint32_t width, uint32_t height, ui
   if (wgpuFormat == wgpu::TextureFormat::RGBA8Unorm && mips > 1) {
     hasArbitraryMips = arb_mip_check(width, height, mips, converted);
   }
+  // Scan the decoded RGBA8 pixels (first mip only, early-exit) for any pixel
+  // whose alpha is below the AO pass's clip threshold (0.5 → value ≤ 127).
+  // This identifies textures that will actually discard pixels, regardless of
+  // which GX format they came from, without relying on the dirty alpha-compare state.
+  bool hasTransparentPixels = false;
+  if (wgpuFormat == wgpu::TextureFormat::RGBA8Unorm && !converted.empty()) {
+    const size_t firstMipBytes = static_cast<size_t>(width) * height * 4u;
+    const size_t scanBytes = std::min(converted.size(), firstMipBytes);
+    const uint8_t* bytes = converted.data();
+    for (size_t i = 3; i < scanBytes; i += 4) {
+      if (bytes[i] <= 127u) {
+        hasTransparentPixels = true;
+        break;
+      }
+    }
+  }
   return {
       .format = wgpuFormat,
       .width = width,
@@ -516,6 +532,7 @@ ConvertedTexture convert_texture(u32 format, uint32_t width, uint32_t height, ui
       .mips = mips,
       .data = std::move(converted),
       .hasArbitraryMips = hasArbitraryMips,
+      .hasPunchThrough = hasTransparentPixels,
   };
 }
 

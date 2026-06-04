@@ -23,6 +23,10 @@ struct ConvertedTexture {
   uint32_t mips = 1;
   ByteBuffer data;
   bool hasArbitraryMips = false;
+  // True when the decoded RGBA8 contains at least one pixel whose alpha ≤ 127
+  // (i.e., would be clipped by the AO pass's 0.5 threshold). Set for CMPR,
+  // RGBA8, RGB5A3, IA4, IA8 — only those are scanned; other formats are false.
+  bool hasPunchThrough = false; // field name kept for binary compat; semantic = hasTransparentPixels
 };
 
 ConvertedTexture convert_texture(u32 format, uint32_t width, uint32_t height, uint32_t mips, ArrayRef<uint8_t> data);
