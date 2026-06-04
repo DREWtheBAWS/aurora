@@ -1585,6 +1585,8 @@ static void maybe_fire_capture(GXPrimitive prim, GXVtxFmt fmt, u16 vtxCount, con
   cap.projType       = static_cast<uint8_t>(g_gxState.projType);
   cap.viewportWidth  = g_gxState.renderViewport.width;
   cap.viewportHeight = g_gxState.renderViewport.height;
+  static_assert(sizeof(g_gxState.proj) == sizeof(cap.projMtx));
+  memcpy(cap.projMtx, &g_gxState.proj, sizeof(cap.projMtx));
 
   g_captureCallback(&cap, g_captureUserdata);
 }

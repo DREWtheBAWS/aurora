@@ -41,6 +41,10 @@ typedef struct AuroraGxCaptureDraw {
   uint8_t projType;        // GXProjectionType: GX_PERSPECTIVE=0, GX_ORTHOGRAPHIC=1
   float   viewportWidth;   // render viewport dimensions in pixels
   float   viewportHeight;
+
+  // Full 4x4 GX projection matrix at draw time (row-major).
+  // Reconstructed from the 6 XF projection params by Aurora.
+  float projMtx[4][4];
 } AuroraGxCaptureDraw;
 
 typedef void (*AuroraGeometryCaptureCallback)(const AuroraGxCaptureDraw* draw, void* userdata);
