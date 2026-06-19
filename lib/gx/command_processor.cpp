@@ -1420,7 +1420,11 @@ static void handle_xf(const u8* data, u32& pos, u32 size, bool bigEndian) {
           f32 p4 = read_f32(xfData + 16, bigEndian);
           f32 p5 = read_f32(xfData + 20, bigEndian);
           u32 projType = read_u32(xfData + 24, bigEndian);
+          const GXProjectionType prevProjType = g_gxState.projType;
           g_gxState.projType = static_cast<GXProjectionType>(projType);
+          if (g_gxState.projType == GX_ORTHOGRAPHIC && prevProjType != GX_ORTHOGRAPHIC) {
+            gfx::mark_pre_ui_render_pass();
+          }
           // Reconstruct 4x4 projection matrix from 6 params
           auto& proj = g_gxState.proj;
           proj = {};

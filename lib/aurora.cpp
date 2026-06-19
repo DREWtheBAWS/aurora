@@ -41,6 +41,9 @@ using webgpu::g_surface;
 // Post-render callback (RTAO and other custom passes)
 AuroraPostRenderCallback g_postRenderCallback = nullptr;
 void* g_postRenderUserdata = nullptr;
+// Pre-UI callback (fires before first orthographic/HUD render pass)
+AuroraPostRenderCallback g_preUICallback = nullptr;
+void* g_preUIUserdata = nullptr;
 #endif
 
 #ifdef AURORA_ENABLE_GX
@@ -267,7 +270,9 @@ void end_frame() noexcept {
   };
   auto encoder = g_device.CreateCommandEncoder(&encoderDescriptor);
   gfx::end_frame(encoder);
+  gfx::set_pre_ui_callback(g_preUICallback, g_preUIUserdata);
   gfx::render(encoder);
+  gfx::set_pre_ui_callback(nullptr, nullptr);
   if (g_postRenderCallback != nullptr) {
     g_postRenderCallback(g_device.Get(), encoder.Get(), g_postRenderUserdata);
   }
@@ -410,6 +415,15 @@ void aurora_set_post_render_callback(AuroraPostRenderCallback cb, void* userdata
 #endif
 }
 
+void aurora_set_pre_ui_callback(AuroraPostRenderCallback cb, void* userdata) {
+#ifdef AURORA_ENABLE_GX
+  aurora::g_preUICallback = cb;
+  aurora::g_preUIUserdata = userdata;
+#else
+  (void)cb; (void)userdata;
+#endif
+}
+
 WGPUTextureView aurora_get_depth_texture_view(void) {
 #ifdef AURORA_ENABLE_GX
   return aurora::webgpu::g_depthBuffer.view.Get();
@@ -432,5 +446,21 @@ void aurora_get_proj_matrix(float out[16]) {
   memcpy(out, &aurora::gx::g_gxState.proj, 64);
 #else
   memset(out, 0, 64);
+#endif
+}
+
+WGPUTextureView aurora_get_color_texture_view(void) {
+#ifdef AURORA_ENABLE_GX
+  return aurora::webgpu::present_source().view.Get();
+#else
+  return nullptr;
+#endif
+}
+
+WGPUTexture aurora_get_color_texture(void) {
+#ifdef AURORA_ENABLE_GX
+  return aurora::webgpu::present_source().texture.Get();
+#else
+  return nullptr;
 #endif
 }

@@ -299,4 +299,12 @@ void set_scissor(const ClipRect& scissor) noexcept;
 
 void push_debug_group(std::string label);
 void insert_debug_marker(std::string label);
+
+// Pre-UI callback: fires once per frame just before the last perspective→orthographic
+// projection transition (i.e., just before the real HUD render pass begins). Using the
+// last transition rather than the first avoids misfiring on intermediate screen effects
+// (e.g. sun-haze, fade overlays) that happen to use orthographic projection mid-frame.
+using PreUICallback = void (*)(WGPUDevice, WGPUCommandEncoder, void*);
+void set_pre_ui_callback(PreUICallback cb, void* userdata) noexcept;
+void mark_pre_ui_render_pass() noexcept;
 } // namespace aurora::gfx

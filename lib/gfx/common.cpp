@@ -151,6 +151,11 @@ struct RenderPass {
 static std::vector<RenderPass> g_renderPasses;
 static u32 g_currentRenderPass = UINT32_MAX;
 static bool g_inOffscreen = false;
+
+// Pre-UI callback — fires in render() before the first orthographic render pass.
+static PreUICallback g_preUICallback = nullptr;
+static void* g_preUIUserdata = nullptr;
+static u32 g_preUIRenderPass = UINT32_MAX;
 static std::optional<RenderPass> g_suspendedEfbPass;
 static Viewport g_suspendedEfbViewport;
 static ClipRect g_suspendedEfbScissor;
@@ -638,6 +643,17 @@ void map_staging_buffer() {
       });
 }
 
+void set_pre_ui_callback(PreUICallback cb, void* userdata) noexcept {
+  g_preUICallback = cb;
+  g_preUIUserdata = userdata;
+}
+
+void mark_pre_ui_render_pass() noexcept {
+  // Update on every perspective→orthographic transition so we end up at the
+  // LAST such boundary (always the real HUD), not an earlier screen effect.
+  g_preUIRenderPass = g_currentRenderPass;
+}
+
 bool begin_frame() {
   ZoneScoped;
   {
@@ -674,6 +690,7 @@ bool begin_frame() {
   g_drawCallCount = 0;
   g_mergedDrawCallCount = 0;
   g_suspendedEfbPass.reset();
+  g_preUIRenderPass = UINT32_MAX;
 
   g_renderPasses.emplace_back();
   set_efb_targets(g_renderPasses[0]);
@@ -761,6 +778,9 @@ static void expire_cached_bind_groups() {
 void render(wgpu::CommandEncoder& cmd) {
   ZoneScoped;
   for (u32 i = 0; i < g_renderPasses.size(); ++i) {
+    if (i == g_preUIRenderPass && g_preUICallback != nullptr) {
+      g_preUICallback(g_device.Get(), cmd.Get(), g_preUIUserdata);
+    }
     const auto& passInfo = g_renderPasses[i];
     for (const auto& conv : passInfo.paletteConvs) {
       tex_palette_conv::run(cmd, conv);
