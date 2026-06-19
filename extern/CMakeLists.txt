@@ -243,6 +243,7 @@ if (AURORA_ENABLE_GX)
         EXCLUDE_FROM_ALL
       )
       FetchContent_MakeAvailable(zstd)
+      add_library(zstd::libzstd ALIAS libzstd_static)
     else ()
       message(STATUS "aurora: Using existing zstd")
     endif ()
