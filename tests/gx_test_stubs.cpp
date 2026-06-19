@@ -60,11 +60,6 @@ Vec2<uint32_t> configured_fb_size() noexcept { return {640, 480}; }
 void configure(const GXRenderModeObj*) noexcept {}
 } // namespace aurora::vi
 
-// --- Texture uploads ---
-namespace aurora::gfx {
-std::vector<TextureUpload> g_textureUploads;
-} // namespace aurora::gfx
-
 // --- get_texture ---
 namespace aurora::gx {
 const gfx::TextureBind& get_texture(GXTexMapID id) noexcept { return g_gxState.textures[id]; }
@@ -120,14 +115,12 @@ gfx::Range build_uniform(const ShaderInfo& info, uint32_t vtxStart, const BindGr
 }
 void resolve_sampled_textures(const ShaderInfo& info) noexcept {}
 u8 color_channel(GXChannelID id) noexcept { return 0; }
-u8 comp_type_size(GXAttr attr, GXCompType type) noexcept { return 0; }
-u8 comp_cnt_count(GXAttr attr, GXCompCnt cnt) noexcept { return 0; }
 } // namespace aurora::gx
 
 // --- Buffer push stubs ---
 namespace aurora::gfx {
-Range push_verts(const uint8_t* data, size_t length) { return {}; }
-Range push_indices(const uint8_t* data, size_t length) { return {}; }
+Range push_verts(const uint8_t* data, size_t length, size_t alignment) { return {}; }
+Range push_indices(const uint8_t* data, size_t length, size_t alignment) { return {}; }
 Range push_uniform(const uint8_t* data, size_t length) { return {}; }
 Range push_storage(const uint8_t* data, size_t length) { return {}; }
 
@@ -150,9 +143,13 @@ template <>
 PipelineRef pipeline_ref<gx::PipelineConfig>(const gx::PipelineConfig& config) {
   return 0;
 }
+gx::DrawData g_testLastDraw{};
+uint32_t g_testDrawCount = 0;
+
 template <>
 void push_draw_command<gx::DrawData>(gx::DrawData data) {
-  // No-op
+  g_testLastDraw = data;
+  ++g_testDrawCount;
 }
 template <>
 gx::DrawData* get_last_draw_command() {
@@ -179,7 +176,10 @@ TextureHandle new_render_texture(uint32_t width, uint32_t height, u32 gxFormat, 
   return {};
 }
 TextureHandle new_conv_texture(uint32_t width, uint32_t height, u32 gxFormat, const char* label) noexcept { return {}; }
-void write_texture(const TextureRef& ref, ArrayRef<uint8_t> data) noexcept {}
+void write_texture(TextureRef& ref, ArrayRef<uint8_t> data) noexcept {}
+void queue_texture_upload(TextureUpload upload) {}
+void queue_texture_upload_data(const uint8_t* data, size_t length, uint32_t bytesPerRow, uint32_t rowsPerImage,
+                               wgpu::TexelCopyTextureInfo tex, wgpu::Extent3D size) {}
 void resolve_pass(TextureHandle texture, ClipRect rect, bool clearColor, bool clearAlpha, bool clearDepth,
                   Vec4<float> clearColorValue, float clearDepthValue, GXTexFmt resolveFormat) {}
 void queue_palette_conv(tex_palette_conv::ConvRequest req) {}
