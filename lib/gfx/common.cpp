@@ -319,11 +319,15 @@ static void enqueue_process_events() {
 }
 
 static void wait_for_gpu_progress(std::chrono::nanoseconds sleepDuration) {
-  // NOTE: do NOT call enqueue_process_events() here. In the encounter/dawn
-  // fork, g_instance.ProcessEvents() blocks for variable "periods of time"
-  // (see commented-out set_event_pump above). Calling it every 100µs–1ms
-  // floods the render worker with slow calls and makes every stall worse.
-  // AllowSpontaneous handles MapAsync callbacks without explicit pumping.
+  // Pumping here is REQUIRED with stock google/dawn: staging-buffer MapAsync
+  // callbacks (which release staging slots) only run when the instance observes
+  // fence completion, and AllowSpontaneous alone does not tick the device.
+  // Without this, acquire_mapped_staging_buffer() spins forever after frame 1.
+  // (The encounter/dawn fork's ProcessEvents blocked for long periods, which is
+  // why this was once removed — stock dawn's ProcessEvents is non-blocking.)
+  if (render_worker::is_idle()) {
+    enqueue_process_events();
+  }
   std::this_thread::sleep_for(sleepDuration);
 }
 
@@ -1315,10 +1319,12 @@ void end_frame(EndFrameCallback callback) {
     }
     g_frameSlots.release(frameSlot);
     expire_cached_bind_groups();
-    // Do NOT call process_events() here. In the encounter/dawn fork,
-    // ProcessEvents() blocks for variable amounts of time (vsync or fence
-    // wait), stalling the render worker. AllowSpontaneous mode fires MapAsync
-    // callbacks when the GPU fence signals without needing an explicit pump.
+    // Pump completed events BEFORE queueing the new map so already-signaled
+    // fences deliver their MapAsync callbacks (releasing staging slots for the
+    // main thread).  Order matters: pumping after MapAsync would try to wait on
+    // the buffer just submitted.  Stock dawn's ProcessEvents is non-blocking;
+    // only the encounter/dawn fork's version blocked (why this was once removed).
+    process_events();
     map_staging_buffer(stagingSlot, true);
   });
 }
