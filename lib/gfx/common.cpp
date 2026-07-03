@@ -319,9 +319,11 @@ static void enqueue_process_events() {
 }
 
 static void wait_for_gpu_progress(std::chrono::nanoseconds sleepDuration) {
-  if (render_worker::is_idle()) {
-    enqueue_process_events();
-  }
+  // NOTE: do NOT call enqueue_process_events() here. In the encounter/dawn
+  // fork, g_instance.ProcessEvents() blocks for variable "periods of time"
+  // (see commented-out set_event_pump above). Calling it every 100µs–1ms
+  // floods the render worker with slow calls and makes every stall worse.
+  // AllowSpontaneous handles MapAsync callbacks without explicit pumping.
   std::this_thread::sleep_for(sleepDuration);
 }
 
@@ -461,7 +463,7 @@ static void seal_pass(FramePacket& frame, uint32_t passIndex) {
   pass.sealed = true;
 }
 
-static void encode_op(wgpu::CommandEncoder& cmd, FramePacket& frame, const FrameOp& op);
+static void encode_op(wgpu::CommandEncoder& cmd, FramePacket& frame, const FrameOp& op, uint32_t preUIPass = UINT32_MAX);
 static void render(wgpu::CommandEncoder& cmd, FramePacket& frame, RenderPass& passInfo, uint32_t passIndex);
 static void render_pass(const wgpu::RenderPassEncoder& pass, FramePacket& frame, const RenderPass& passInfo);
 static void expire_cached_bind_groups();
@@ -472,12 +474,12 @@ static void enqueue_op(FramePacket& frame, size_t frameSlot, uint32_t opIndex) {
     return;
   }
   auto op = frame.ops[opIndex];
-  render_worker::enqueue_encode_pass(frame.frameId, opIndex, [frameSlot, op = std::move(op)] {
+  render_worker::enqueue_encode_pass(frame.frameId, opIndex, [frameSlot, op = std::move(op), preUIPass = g_preUIRenderPass] {
     if (op.renderPass == nullptr && op.textureCopy == nullptr) {
       return;
     }
     auto& packet = g_framePackets[frameSlot];
-    encode_op(packet.encoder, packet, op);
+    encode_op(packet.encoder, packet, op, preUIPass);
   });
 }
 
@@ -1176,7 +1178,7 @@ bool begin_frame() {
   ZoneScoped;
   // pace_frame_start();
   const size_t frameSlot = acquire_frame_slot();
-  const auto stagingSlot = acquire_mapped_staging_buffer();
+  std::optional<size_t> stagingSlot = acquire_mapped_staging_buffer();
   if (!stagingSlot) {
     g_frameSlots.release(frameSlot);
     return false;
@@ -1313,8 +1315,11 @@ void end_frame(EndFrameCallback callback) {
     }
     g_frameSlots.release(frameSlot);
     expire_cached_bind_groups();
+    // Do NOT call process_events() here. In the encounter/dawn fork,
+    // ProcessEvents() blocks for variable amounts of time (vsync or fence
+    // wait), stalling the render worker. AllowSpontaneous mode fires MapAsync
+    // callbacks when the GPU fence signals without needing an explicit pump.
     map_staging_buffer(stagingSlot, true);
-    process_events();
   });
 }
 
@@ -1399,12 +1404,12 @@ static void copy_staging_to_high_water(wgpu::CommandEncoder& cmd, FramePacket& f
   }
 }
 
-static void encode_op(wgpu::CommandEncoder& cmd, FramePacket& frame, const FrameOp& op) {
+static void encode_op(wgpu::CommandEncoder& cmd, FramePacket& frame, const FrameOp& op, uint32_t preUIPass) {
   copy_staging_to_high_water(cmd, frame, op);
   switch (op.type) {
   case FrameOpType::RenderPass:
     if (op.renderPass != nullptr) {
-      if (op.index == g_preUIRenderPass && g_preUICallback != nullptr) {
+      if (op.index == preUIPass && g_preUICallback != nullptr) {
         g_preUICallback(g_device.Get(), cmd.Get(), g_preUIUserdata);
       }
       render(cmd, frame, *op.renderPass, op.index);

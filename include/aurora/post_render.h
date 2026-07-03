@@ -43,6 +43,11 @@ void aurora_get_proj_matrix(float out[16]);
 WGPUTextureView aurora_get_color_texture_view(void);
 WGPUTexture     aurora_get_color_texture(void);
 
+// Returns Aurora's device queue (non-owning — do NOT call wgpuQueueRelease on it).
+// Use this instead of wgpuDeviceGetQueue() inside post-render callbacks to avoid
+// reference-counting issues introduced in newer Dawn versions.
+WGPUQueue aurora_get_queue(void);
+
 #ifdef __cplusplus
 }
 #endif

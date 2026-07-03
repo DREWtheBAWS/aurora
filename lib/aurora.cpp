@@ -258,9 +258,7 @@ void end_frame() noexcept {
   ZoneScoped;
 #ifdef AURORA_ENABLE_GX
   gx::fifo::drain();
-  gfx::set_pre_ui_callback(g_preUICallback, g_preUIUserdata);
   gfx::finish();
-  gfx::set_pre_ui_callback(nullptr, nullptr);
   auto imguiDrawData = imgui::freeze();
 
   const auto& presentSource = webgpu::present_source();
@@ -281,7 +279,8 @@ void end_frame() noexcept {
   const auto postRenderCb = g_postRenderCallback;
   const auto postRenderUd = g_postRenderUserdata;
   gfx::end_frame([rmlBindGroup = std::move(rmlBindGroup), rmlOverlay, viewport,
-                  imguiDrawData = std::move(imguiDrawData), postRenderCb, postRenderUd](wgpu::CommandEncoder& encoder) {
+                  imguiDrawData = std::move(imguiDrawData),
+                  postRenderCb, postRenderUd](wgpu::CommandEncoder& encoder) {
     if (postRenderCb != nullptr) {
       postRenderCb(g_device.Get(), encoder.Get(), postRenderUd);
     }
@@ -301,7 +300,6 @@ void end_frame() noexcept {
         }
       }
     }
-
     const bool canPresent = currentTexture && currentView;
     if (canPresent) {
       wgpu::BindGroup presentBindGroup;
@@ -481,6 +479,9 @@ void aurora_set_pre_ui_callback(AuroraPostRenderCallback cb, void* userdata) {
 #ifdef AURORA_ENABLE_GX
   aurora::g_preUICallback = cb;
   aurora::g_preUIUserdata = userdata;
+  // Route through gfx::set_pre_ui_callback so the callback fires at the
+  // perspective→orthographic boundary (before the HUD), not after all GX passes.
+  aurora::gfx::set_pre_ui_callback(cb, userdata);
 #else
   (void)cb; (void)userdata;
 #endif
@@ -522,6 +523,14 @@ WGPUTextureView aurora_get_color_texture_view(void) {
 WGPUTexture aurora_get_color_texture(void) {
 #ifdef AURORA_ENABLE_GX
   return aurora::webgpu::present_source().texture.Get();
+#else
+  return nullptr;
+#endif
+}
+
+WGPUQueue aurora_get_queue(void) {
+#ifdef AURORA_ENABLE_GX
+  return aurora::webgpu::g_queue.Get();
 #else
   return nullptr;
 #endif

@@ -290,6 +290,10 @@ uint32_t alloc_zone() {
 } // namespace
 
 void initialize() {
+#ifndef TRACY_ENABLE
+  // GPU profiling readback causes D3D12 Submit() stalls when Tracy isn't active.
+  return;
+#endif
   g_enabled = g_device.HasFeature(wgpu::FeatureName::TimestampQuery);
   if (!g_enabled) {
     Log.info("Timestamp queries unsupported; GPU profiling disabled");
@@ -395,10 +399,8 @@ void after_submit() {
                            });
     g_recordSlot = (g_recordSlot + 1) % RingDepth;
   }
-  {
-    ZoneScopedN("ProcessEvents");
-    g_instance.ProcessEvents();
-  }
+  // ProcessEvents was here but blocks the render worker for seconds on D3D12.
+  // The MapAsync callback uses AllowSpontaneous so it fires without an explicit pump.
   while (true) {
     auto& slot = g_slots[g_emitSlot];
     const auto state = slot.state.load(std::memory_order_acquire);
