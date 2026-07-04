@@ -12,7 +12,10 @@
 #include <absl/container/flat_hash_map.h>
 #include <tracy/Tracy.hpp>
 
+#include <atomic>
+#include <chrono>
 #include <cmath>
+#include <cstdio>
 #include <cstring>
 #include <optional>
 
@@ -1550,7 +1553,10 @@ static u32 calculate_last_vtx_size(GXVtxFmt fmt) {
   return vtxSize;
 }
 
-static void maybe_fire_capture(GXPrimitive prim, GXVtxFmt fmt, u16 vtxCount, const u8* rawVerts) {
+// explicitIndices/explicitIndexCount: for GX_AURORA_DRAW_INDEXED, whose index
+// buffer is provided (host-endian u16) instead of derived from the primitive.
+static void maybe_fire_capture(GXPrimitive prim, GXVtxFmt fmt, u16 vtxCount, const u8* rawVerts,
+                               const uint16_t* explicitIndices = nullptr, u32 explicitIndexCount = 0) {
   if (g_captureCallback == nullptr || g_gxState.vtxDesc[GX_VA_POS] == GX_NONE) {
     return;
   }
@@ -1570,7 +1576,9 @@ static void maybe_fire_capture(GXPrimitive prim, GXVtxFmt fmt, u16 vtxCount, con
   }
 
   ByteBuffer capIdxBuf;
-  prepare_idx_buffer(capIdxBuf, prim, 0, vtxCount);
+  if (explicitIndices == nullptr) {
+    prepare_idx_buffer(capIdxBuf, prim, 0, vtxCount);
+  }
 
   AuroraGxCaptureDraw cap{};
   cap.vertData         = rawVerts;
@@ -1590,8 +1598,13 @@ static void maybe_fire_capture(GXPrimitive prim, GXVtxFmt fmt, u16 vtxCount, con
   for (uint32_t m = 0; m < 10; ++m) {
     memcpy(cap.pnMtx[m], &g_gxState.pnMtx[m].pos, sizeof(cap.pnMtx[m]));
   }
-  cap.indices       = reinterpret_cast<const uint16_t*>(capIdxBuf.data());
-  cap.indexCount    = static_cast<uint32_t>(capIdxBuf.size() / sizeof(uint16_t));
+  if (explicitIndices != nullptr) {
+    cap.indices    = explicitIndices;
+    cap.indexCount = explicitIndexCount;
+  } else {
+    cap.indices    = reinterpret_cast<const uint16_t*>(capIdxBuf.data());
+    cap.indexCount = static_cast<uint32_t>(capIdxBuf.size() / sizeof(uint16_t));
+  }
   cap.projType       = static_cast<uint8_t>(g_gxState.projType);
   cap.viewportWidth  = g_gxState.renderViewport.width;
   cap.viewportHeight = g_gxState.renderViewport.height;
@@ -1638,6 +1651,7 @@ static void maybe_fire_capture(GXPrimitive prim, GXVtxFmt fmt, u16 vtxCount, con
   cap.alphaComp1 = static_cast<uint8_t>(g_gxState.alphaCompare.comp1);
   cap.alphaRef1  = static_cast<uint8_t>(g_gxState.alphaCompare.ref1);
   cap.alphaOp    = static_cast<uint8_t>(g_gxState.alphaCompare.op);
+  cap.depthWrite = (g_gxState.depthCompare && g_gxState.depthUpdate) ? 1 : 0;
 
   g_captureCallback(&cap, g_captureUserdata);
 }
@@ -1739,6 +1753,11 @@ static void handle_draw_unmerged(GXPrimitive prim, GXVtxFmt fmt, u16 vtxCount, g
     if (prim != GX_LINES && prim != GX_LINESTRIP && prim != GX_POINTS) {
       maybe_fire_capture(prim, fmt, vtxCount, rawVerts);
     }
+  } else {
+    // Plain triangle lists were once nonexistent in GX streams, but the display-
+    // list optimizer (aurora::gx::dl::optimize) batches J3D strips into
+    // GX_TRIANGLES draws — world geometry must fire the capture here too.
+    maybe_fire_capture(prim, fmt, vtxCount, rawVerts);
   }
 
   push_gx_draw(prim, fmt, vtxCount, vertRange, idxRange, numIndices);
@@ -1970,6 +1989,7 @@ void handle_aurora(const u8* data, u32& pos, u32 size, bool bigEndian) {
     const u32 idxBytes = indexCount * static_cast<u32>(sizeof(u16));
     CHECK(pos + idxBytes <= size, "GX_AURORA_DRAW_INDEXED index data overrun");
     // Index data is always host-endian; push it to the GPU buffer as-is
+    const auto* capIndices = reinterpret_cast<const uint16_t*>(data + pos);
     const gfx::Range idxRange = gfx::push_indices(data + pos, idxBytes, 4);
     pos += idxBytes;
     u32 vtxSize;
@@ -1981,6 +2001,11 @@ void handle_aurora(const u8* data, u32& pos, u32 size, bool bigEndian) {
     const u32 totalVtxBytes = vtxCount * vtxSize;
     CHECK(pos + totalVtxBytes <= size, "GX_AURORA_DRAW_INDEXED vertex data overrun");
     const gfx::Range vertRange = gfx::push_verts(data + pos, totalVtxBytes, 4);
+    if (indexCount != 0) {
+      // The batched J3D world geometry arrives through this path — RT capture
+      // must see it (with the explicit host-endian index buffer).
+      maybe_fire_capture(prim, fmt, vtxCount, data + pos, capIndices, indexCount);
+    }
     pos += totalVtxBytes;
     if (indexCount != 0) {
       push_gx_draw(prim, fmt, vtxCount, vertRange, idxRange, indexCount);

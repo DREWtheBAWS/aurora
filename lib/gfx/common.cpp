@@ -19,6 +19,7 @@
 
 #include <atomic>
 #include <chrono>
+#include <cstdio>
 #include <deque>
 #include <mutex>
 #include <optional>
@@ -244,6 +245,13 @@ static bool g_inOffscreen = false;
 static PreUICallback g_preUICallback = nullptr;
 static void* g_preUIUserdata = nullptr;
 static u32 g_preUIRenderPass = UINT32_MAX;
+// Ops sealed after the first perspective→ortho transition of the frame are held
+// here instead of being enqueued immediately, and flushed in end_frame() once the
+// FINAL transition (the real HUD boundary) is known.  This makes the pre-UI
+// callback fire exactly once per frame, before the pass g_preUIRenderPass ends up
+// pointing at — firing at enqueue-time capture instead fired at EVERY transition
+// (each early ortho pass captured its own mark).
+static std::vector<uint32_t> g_heldPreUIOps;
 static std::optional<RenderPass> g_suspendedEfbPass;
 static Viewport g_suspendedEfbViewport;
 static ClipRect g_suspendedEfbScissor;
@@ -467,24 +475,45 @@ static void seal_pass(FramePacket& frame, uint32_t passIndex) {
   pass.sealed = true;
 }
 
-static void encode_op(wgpu::CommandEncoder& cmd, FramePacket& frame, const FrameOp& op, uint32_t preUIPass = UINT32_MAX);
+static void encode_op(wgpu::CommandEncoder& cmd, FramePacket& frame, const FrameOp& op, bool firePreUI = false);
 static void render(wgpu::CommandEncoder& cmd, FramePacket& frame, RenderPass& passInfo, uint32_t passIndex);
 static void render_pass(const wgpu::RenderPassEncoder& pass, FramePacket& frame, const RenderPass& passInfo);
 static void expire_cached_bind_groups();
 static void push_command(CommandType type, const Command::Data& data);
 
-static void enqueue_op(FramePacket& frame, size_t frameSlot, uint32_t opIndex) {
-  if (opIndex >= frame.ops.size()) {
-    return;
-  }
+static void enqueue_op_now(FramePacket& frame, size_t frameSlot, uint32_t opIndex, bool firePreUI) {
   auto op = frame.ops[opIndex];
-  render_worker::enqueue_encode_pass(frame.frameId, opIndex, [frameSlot, op = std::move(op), preUIPass = g_preUIRenderPass] {
+  render_worker::enqueue_encode_pass(frame.frameId, opIndex, [frameSlot, op = std::move(op), firePreUI] {
     if (op.renderPass == nullptr && op.textureCopy == nullptr) {
       return;
     }
     auto& packet = g_framePackets[frameSlot];
-    encode_op(packet.encoder, packet, op, preUIPass);
+    encode_op(packet.encoder, packet, op, firePreUI);
   });
+}
+
+static void enqueue_op(FramePacket& frame, size_t frameSlot, uint32_t opIndex) {
+  if (opIndex >= frame.ops.size()) {
+    return;
+  }
+  // Once a P→O transition has been seen this frame, later transitions may still
+  // move the pre-UI boundary.  Hold everything from here on and flush in
+  // end_frame() when the final boundary is known (the held tail is small: HUD +
+  // screen-effect passes).  Ops before any transition can never be the boundary.
+  if (g_preUIRenderPass != UINT32_MAX && g_preUICallback != nullptr) {
+    g_heldPreUIOps.push_back(opIndex);
+    return;
+  }
+  enqueue_op_now(frame, frameSlot, opIndex, false);
+}
+
+static void flush_held_pre_ui_ops(FramePacket& frame, size_t frameSlot) {
+  for (const uint32_t opIndex : g_heldPreUIOps) {
+    const bool fire = frame.ops[opIndex].type == FrameOpType::RenderPass &&
+                      frame.ops[opIndex].index == g_preUIRenderPass;
+    enqueue_op_now(frame, frameSlot, opIndex, fire);
+  }
+  g_heldPreUIOps.clear();
 }
 
 static void enqueue_pass(FramePacket& frame, size_t frameSlot, uint32_t passIndex) {
@@ -1217,6 +1246,7 @@ bool begin_frame() {
   g_mergedDrawCallCount = 0;
   g_suspendedEfbPass.reset();
   g_preUIRenderPass = UINT32_MAX;
+  g_heldPreUIOps.clear();
 
   current_render_passes().emplace_back();
   auto& pass = current_render_passes()[0];
@@ -1298,6 +1328,10 @@ void end_frame(EndFrameCallback callback) {
     g_debugMarkers.clear();
   }
 #endif
+
+  // Flush ops held since the first P→O transition, firing the pre-UI callback
+  // exactly once before the final marked pass (see g_heldPreUIOps).
+  flush_held_pre_ui_ops(frame, frameSlot);
 
   const size_t stagingSlot = frame.stagingBuffer;
   render_worker::enqueue_end_frame(frameId, [frameSlot, stagingSlot, callback = std::move(callback)]() mutable {
@@ -1410,12 +1444,12 @@ static void copy_staging_to_high_water(wgpu::CommandEncoder& cmd, FramePacket& f
   }
 }
 
-static void encode_op(wgpu::CommandEncoder& cmd, FramePacket& frame, const FrameOp& op, uint32_t preUIPass) {
+static void encode_op(wgpu::CommandEncoder& cmd, FramePacket& frame, const FrameOp& op, bool firePreUI) {
   copy_staging_to_high_water(cmd, frame, op);
   switch (op.type) {
   case FrameOpType::RenderPass:
     if (op.renderPass != nullptr) {
-      if (op.index == preUIPass && g_preUICallback != nullptr) {
+      if (firePreUI && g_preUICallback != nullptr) {
         g_preUICallback(g_device.Get(), cmd.Get(), g_preUIUserdata);
       }
       render(cmd, frame, *op.renderPass, op.index);

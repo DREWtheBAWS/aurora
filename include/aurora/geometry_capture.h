@@ -67,6 +67,11 @@ typedef struct AuroraGxCaptureDraw {
   uint8_t alphaComp1;  // GXCompare for operand 1
   uint8_t alphaRef1;   // reference value 1 (0-255)
   uint8_t alphaOp;     // GXAlphaOp combining comp0 and comp1
+
+  // True when depth compare + depth write are both enabled for this draw.
+  // Sky domes, clouds, and most screen effects render without depth writes and
+  // should not act as occluders in RT passes.
+  uint8_t depthWrite;
 } AuroraGxCaptureDraw;
 
 typedef void (*AuroraGeometryCaptureCallback)(const AuroraGxCaptureDraw* draw, void* userdata);
